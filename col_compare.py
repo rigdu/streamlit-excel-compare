@@ -1,86 +1,70 @@
 import streamlit as st
 import pandas as pd
-import io
 
-st.title("🔍 Excel Comparator (Full Rows from Multi-Column Match)")
+# UI: Upload the Excel file
+st.title("Excel Grouper with Merging Options")
+uploaded_file = st.file_uploader("Upload your Excel file (.xlsx)", type=["xlsx"])
 
-file1 = st.file_uploader("📄 Upload First Excel File", type=["xlsx", "xls"], key="file1")
-file2 = st.file_uploader("📄 Upload Second Excel File", type=["xlsx", "xls"], key="file2")
+if uploaded_file:
+    try:
+        # Read Excel, only allow "Sheet1"
+        xls = pd.ExcelFile(uploaded_file)
+        if "Sheet1" not in xls.sheet_names:
+            st.error("The file must have only one sheet named 'Sheet1'.")
+        else:
+            df = pd.read_excel(xls, sheet_name="Sheet1")
 
-if file1 and file2:
-    xls1 = pd.ExcelFile(file1)
-    xls2 = pd.ExcelFile(file2)
+            st.success("File successfully uploaded and read.")
+            st.subheader("Column Headers Found:")
+            st.write(list(df.columns))
 
-    sheet1 = st.selectbox("📑 Select sheet from File 1", xls1.sheet_names, key="sheet1")
-    sheet2 = st.selectbox("📑 Select sheet from File 2", xls2.sheet_names, key="sheet2")
+            # Select columns to delete
+            cols_to_delete = st.multiselect("Select columns to DELETE", options=list(df.columns))
 
-    df1 = pd.read_excel(xls1, sheet_name=sheet1)
-    df2 = pd.read_excel(xls2, sheet_name=sheet2)
+            # Apply column deletion
+            if cols_to_delete:
+                df = df.drop(columns=cols_to_delete)
 
-    st.write("**File 1 Preview:**")
-    st.dataframe(df1.head())
+            # Group-by selection
+            group_by_cols = st.multiselect("Select columns to GROUP BY", options=list(df.columns))
+            delimiter = st.selectbox("Select delimiter for merging grouped values", options=[", ", " | ", "; ", " / ", "||"])
 
-    st.write("**File 2 Preview:**")
-    st.dataframe(df2.head())
+            # Select columns to merge (excluding group-by)
+            merge_columns = st.multiselect("Select columns to MERGE (join unique values)", 
+                                           options=[col for col in df.columns if col not in group_by_cols])
 
-    st.subheader("🔧 Select columns to match by")
-    cols1 = st.multiselect("File 1 columns", df1.columns, key="cols1")
-    cols2 = st.multiselect("File 2 columns", df2.columns, key="cols2")
+            if st.button("Process Grouping"):
+                if not group_by_cols:
+                    st.warning("Please select at least one column to group by.")
+                else:
+                    # Group and merge
+                    def merge_unique(series):
+                        return delimiter.join(sorted(set(map(str, series.dropna()))))
 
-    if len(cols1) != len(cols2):
-        st.warning("⚠️ Please select the same number of columns from both files.")
-    elif cols1 and cols2 and st.button("🔍 Compare Now"):
-        # Create composite key in both dataframes
-        df1["__key__"] = df1[cols1].astype(str).agg(" | ".join, axis=1)
-        df2["__key__"] = df2[cols2].astype(str).agg(" | ".join, axis=1)
+                    grouped_df = df.groupby(group_by_cols, dropna=False).agg({
+                        col: merge_unique for col in merge_columns
+                    }).reset_index()
 
-        # Identify match and mismatch sets
-        keys1 = set(df1["__key__"].dropna())
-        keys2 = set(df2["__key__"].dropna())
+                    # Merge with original non-merged columns (keep first values)
+                    keep_cols = [col for col in df.columns if col not in merge_columns + group_by_cols]
+                    if keep_cols:
+                        first_values = df.groupby(group_by_cols, dropna=False)[keep_cols].first().reset_index()
+                        grouped_df = pd.merge(grouped_df, first_values, on=group_by_cols, how="left")
 
-        match_keys = keys1 & keys2
-        only1_keys = keys1 - keys2
-        only2_keys = keys2 - keys1
+                    # Rearrange columns
+                    final_cols = group_by_cols + merge_columns + keep_cols
+                    grouped_df = grouped_df[final_cols]
 
-        # Filter full rows
-        df_match1 = df1[df1["__key__"].isin(match_keys)].drop(columns="__key__")
-        df_only1 = df1[df1["__key__"].isin(only1_keys)].drop(columns="__key__")
-        df_match2 = df2[df2["__key__"].isin(match_keys)].drop(columns="__key__")
-        df_only2 = df2[df2["__key__"].isin(only2_keys)].drop(columns="__key__")
+                    st.success("Data grouped and merged successfully!")
+                    st.dataframe(grouped_df)
 
-        st.success(f"✅ Matches: {len(df_match1)} rows")
-        st.info(f"📁 Only in File 1: {len(df_only1)} rows")
-        st.info(f"📁 Only in File 2: {len(df_only2)} rows")
+                    # Download
+                    st.download_button(
+                        label="Download Grouped Data as Excel",
+                        data=grouped_df.to_excel(index=False, engine="openpyxl"),
+                        file_name="grouped_output.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
 
-        # Show expandable results
-        with st.expander("🎯 Matched Rows from File 1"):
-            st.dataframe(df_match1)
-        with st.expander("🎯 Matched Rows from File 2"):
-            st.dataframe(df_match2)
-        with st.expander("❌ Only in File 1"):
-            st.dataframe(df_only1)
-        with st.expander("❌ Only in File 2"):
-            st.dataframe(df_only2)
-
-        # Export as Excel
-        def create_excel_file():
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                df_match1.to_excel(writer, sheet_name="Matched_File1", index=False)
-                df_match2.to_excel(writer, sheet_name="Matched_File2", index=False)
-                df_only1.to_excel(writer, sheet_name="Only_in_File1", index=False)
-                df_only2.to_excel(writer, sheet_name="Only_in_File2", index=False)
-            output.seek(0)
-            return output
-
-        excel_output = create_excel_file()
-
-        st.download_button("⬇️ Download Results as Excel", excel_output,
-                           file_name="comparison_full_rows.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-        # Optional CSVs
-        st.download_button("⬇️ CSV: Only in File 1", df_only1.to_csv(index=False), "only_in_file1.csv", "text/csv")
-        st.download_button("⬇️ CSV: Only in File 2", df_only2.to_csv(index=False), "only_in_file2.csv", "text/csv")
-        st.download_button("⬇️ CSV: Matched Rows File 1", df_match1.to_csv(index=False), "matched_file1.csv", "text/csv")
-        st.download_button("⬇️ CSV: Matched Rows File 2", df_match2.to_csv(index=False), "matched_file2.csv", "text/csv")
+    except Exception as e:
+        st.error(f"An error occurred: {str(e)}")
