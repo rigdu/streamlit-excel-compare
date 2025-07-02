@@ -1,0 +1,25 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+.env
+.venv
+.idea/
+*.egg-info/
+dist/
+build/
+.cache/
+.ipynb_checkpoints/
+logs/
+*.log
+# VSCode settings
+.vscode/
+# MacOS system files
+Icon?
+# Jupyter Notebook checkpoints
+*/.ipynb_checkpoints/*
+# Python virtual environment folders
+env/
+ENV/
+venv/
